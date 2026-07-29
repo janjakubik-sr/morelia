@@ -1,0 +1,12 @@
+# Direct third-party Python imports used across the Morelia source tree.
+biopython
+matplotlib
+mdtraj
+networkx
+numpy
+pandas
+ParmEd
+wxPython
+
+# Examples/yasara.py also imports yasaramodule, which is supplied by YASARA
+# and is not installed from PyPI.
