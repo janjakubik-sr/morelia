@@ -7,8 +7,21 @@ import wx
 class VMDConverterFrame(wx.Frame):
     def __init__(self):
         super().__init__(parent=None, title="Desmond .cms to GROMACS .gro Converter", size=(650, 480))
+        self.worker = None
         self.init_ui()
+        self.Bind(wx.EVT_CLOSE, self.on_close)
         self.Centre()
+
+    def on_close(self, event):
+        if self.worker is not None and self.worker.is_alive():
+            wx.MessageBox(
+                "Wait for the active conversion to finish before closing this window.",
+                "Conversion in progress",
+                wx.OK | wx.ICON_INFORMATION,
+            )
+            event.Veto()
+            return
+        event.Skip()
 
     def init_ui(self):
         panel = wx.Panel(self)
@@ -66,7 +79,10 @@ class VMDConverterFrame(wx.Frame):
 
         # Run conversion in a separate thread to keep the GUI active
         thread = threading.Thread(target=self.run_conversion, args=(work_dir, pattern))
-        thread.daemon = True
+        # Keep the process alive until VMD has completed and the output has
+        # been atomically installed.
+        thread.daemon = False
+        self.worker = thread
         thread.start()
 
     def run_conversion(self, work_dir, pattern):
@@ -85,13 +101,30 @@ class VMDConverterFrame(wx.Frame):
             dir_name = os.path.dirname(file_path)
             base_name = os.path.splitext(os.path.basename(file_path))[0]
             out_gro = os.path.join(dir_name, f"{base_name}.gro")
+            tmp_gro = out_gro + ".part"
+            trj_dir = os.path.join(dir_name, f"{base_name}_trj")
 
             self.log(f"[{idx}/{total_files}] Converting: {file_path}")
 
-            # Construct Tcl script sent directly into VMD's stdin
-            vmd_tcl = f"""mol new "{file_path}" type mae waitfor all
-set sel [atomselect top "all"]
-$sel writegro "{out_gro}"
+            # A CMS contributes a static frame 0.  When its matching DTR is
+            # available, VMD appends the trajectory starting at frame 1.  Use
+            # that first dynamic frame so the GRO and converted trajectory
+            # describe the same snapshot.
+            if os.path.isdir(trj_dir):
+                coordinate_source = "first DTR frame"
+                vmd_tcl = f"""mol new "{file_path}" type mae waitfor all
+animate read dtr "{trj_dir}" waitfor all top
+if {{[molinfo top get numframes] < 2}} {{error "DTR contains no readable frames"}}
+animate goto 1
+set sel [atomselect top "all" frame 1]
+$sel writegro "{tmp_gro}"
+quit
+"""
+            else:
+                coordinate_source = "static CMS frame (no matching DTR found)"
+                vmd_tcl = f"""mol new "{file_path}" type mae waitfor all
+set sel [atomselect top "all" frame 0]
+$sel writegro "{tmp_gro}"
 quit
 """
 
@@ -105,13 +138,19 @@ quit
                 )
                 stdout, stderr = process.communicate(input=vmd_tcl)
 
-                if process.returncode == 0:
-                    self.log(f"    --> Successfully created: {out_gro}")
+                if process.returncode == 0 and os.path.getsize(tmp_gro) > 0:
+                    os.replace(tmp_gro, out_gro)
+                    self.log(
+                        f"    --> Successfully created from {coordinate_source}: {out_gro}"
+                    )
                 else:
                     self.log(f"    --> ERROR processing {file_path}:\n{stderr}")
 
             except Exception as e:
                 self.log(f"    --> Failed to execute VMD: {str(e)}")
+            finally:
+                if os.path.exists(tmp_gro):
+                    os.remove(tmp_gro)
 
             # Update Progress Bar
             progress = int((idx / total_files) * 100)

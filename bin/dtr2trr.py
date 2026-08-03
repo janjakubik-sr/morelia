@@ -7,8 +7,21 @@ import wx
 class VMDTrajectoryConverterFrame(wx.Frame):
     def __init__(self):
         super().__init__(parent=None, title="Desmond Trajectory to GROMACS .trr Converter", size=(670, 500))
+        self.worker = None
         self.init_ui()
+        self.Bind(wx.EVT_CLOSE, self.on_close)
         self.Centre()
+
+    def on_close(self, event):
+        if self.worker is not None and self.worker.is_alive():
+            wx.MessageBox(
+                "Wait for the active conversion to finish before closing this window.",
+                "Conversion in progress",
+                wx.OK | wx.ICON_INFORMATION,
+            )
+            event.Veto()
+            return
+        event.Skip()
 
     def init_ui(self):
         panel = wx.Panel(self)
@@ -29,6 +42,26 @@ class VMDTrajectoryConverterFrame(wx.Frame):
         hbox2.Add(pattern_label, flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=8)
         hbox2.Add(self.pattern_txt, proportion=1, flag=wx.EXPAND)
         vbox.Add(hbox2, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
+
+        # --- Frame Range Input ---
+        frame_box = wx.BoxSizer(wx.HORIZONTAL)
+        frame_box.Add(wx.StaticText(panel, label="Frame Range:"),
+                      flag=wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, border=8)
+
+        self.beg_txt = wx.TextCtrl(panel, value="1", size=(70, -1))
+        self.end_txt = wx.TextCtrl(panel, value="-1", size=(70, -1))
+        self.skip_txt = wx.TextCtrl(panel, value="1", size=(70, -1))
+
+        for label, control in (
+            ("Beg:", self.beg_txt),
+            ("End:", self.end_txt),
+            ("Skip:", self.skip_txt),
+        ):
+            frame_box.Add(wx.StaticText(panel, label=label),
+                          flag=wx.ALIGN_CENTER_VERTICAL | wx.LEFT | wx.RIGHT, border=5)
+            frame_box.Add(control, flag=wx.ALIGN_CENTER_VERTICAL)
+
+        vbox.Add(frame_box, flag=wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
 
         # --- Convert Button ---
         self.run_btn = wx.Button(panel, label="Start Trajectory Conversion")
@@ -59,17 +92,43 @@ class VMDTrajectoryConverterFrame(wx.Frame):
             wx.MessageBox("Please enter a valid file glob pattern.", "Error", wx.OK | wx.ICON_ERROR)
             return
 
+        try:
+            beg = int(self.beg_txt.GetValue())
+            end = int(self.end_txt.GetValue())
+            skip = int(self.skip_txt.GetValue())
+        except ValueError:
+            wx.MessageBox("Beg, end, and skip must be integers.", "Error", wx.OK | wx.ICON_ERROR)
+            return
+
+        if beg < 0 or end < -1 or skip < 1:
+            wx.MessageBox(
+                "Beg must be 0 or greater, end must be -1 or greater, and skip must be 1 or greater.",
+                "Error",
+                wx.OK | wx.ICON_ERROR,
+            )
+            return
+
+        if end != -1 and end < beg:
+            wx.MessageBox("End must be -1 or greater than or equal to beg.", "Error", wx.OK | wx.ICON_ERROR)
+            return
+
         # Disable controls during execution
         self.run_btn.Disable()
         self.gauge.SetValue(0)
         self.log_txt.Clear()
 
         # Run conversion in a separate thread to keep GUI responsive
-        thread = threading.Thread(target=self.run_conversion, args=(work_dir, pattern))
-        thread.daemon = True
+        thread = threading.Thread(
+            target=self.run_conversion,
+            args=(work_dir, pattern, beg, end, skip),
+        )
+        # Do not let closing the GUI terminate a conversion midway through a
+        # trajectory file.
+        thread.daemon = False
+        self.worker = thread
         thread.start()
 
-    def run_conversion(self, work_dir, pattern):
+    def run_conversion(self, work_dir, pattern, beg, end, skip):
         search_path = os.path.join(work_dir, pattern)
         files = glob.glob(search_path)
 
@@ -88,6 +147,9 @@ class VMDTrajectoryConverterFrame(wx.Frame):
             # Construct paths matching your bash script logic
             trj_dir = os.path.join(dir_name, f"{base_name}_trj")
             out_trr = os.path.join(dir_name, f"{base_name}.trr")
+            out_gro = os.path.join(dir_name, f"{base_name}.gro")
+            tmp_trr = out_trr + ".part"
+            tmp_gro = out_gro + ".part"
 
             # Validate that trajectory folder exists before calling VMD
             if not os.path.exists(trj_dir):
@@ -96,11 +158,15 @@ class VMDTrajectoryConverterFrame(wx.Frame):
 
             self.log(f"[{idx}/{total_files}] Converting trajectory: {base_name}_trj")
 
-            # Tcl script: loads topology + trajectory, skips frame 0 (beg 1)
+            # The CMS is VMD frame 0 and the DTR begins at frame 1.  Export the
+            # GRO from the exact frame that becomes the first TRR frame.
             vmd_tcl = f"""mol new "{file_path}" type mae waitfor all
 animate read dtr "{trj_dir}" waitfor all top
 set sel [atomselect top "all"]
-animate write trr "{out_trr}" beg 1 end -1 skip 1 sel $sel
+animate write trr "{tmp_trr}" beg {beg} end {end} skip {skip} sel $sel
+animate goto {beg}
+set gro_sel [atomselect top "all" frame {beg}]
+$gro_sel writegro "{tmp_gro}"
 quit
 """
 
@@ -114,13 +180,24 @@ quit
                 )
                 stdout, stderr = process.communicate(input=vmd_tcl)
 
-                if process.returncode == 0:
+                if (
+                    process.returncode == 0
+                    and os.path.getsize(tmp_trr) > 0
+                    and os.path.getsize(tmp_gro) > 0
+                ):
+                    os.replace(tmp_trr, out_trr)
+                    os.replace(tmp_gro, out_gro)
                     self.log(f"    --> Successfully created: {out_trr}")
+                    self.log(f"    --> Synchronized frame {beg} structure: {out_gro}")
                 else:
                     self.log(f"    --> ERROR processing {base_name}:\n{stderr}")
 
             except Exception as e:
                 self.log(f"    --> Failed to execute VMD: {str(e)}")
+            finally:
+                for temporary_path in (tmp_trr, tmp_gro):
+                    if os.path.exists(temporary_path):
+                        os.remove(temporary_path)
 
             # Update Progress Bar
             progress = int((idx / total_files) * 100)

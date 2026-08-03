@@ -1,14 +1,45 @@
 import os
 import glob
+import re
 import subprocess
 import threading
 import wx
 
+
+def gmx_frame_count(path):
+    """Return the coordinate-frame count reported by ``gmx check``."""
+    process = subprocess.run(
+        ["gmx", "check", "-f", path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    output = process.stdout + "\n" + process.stderr
+    if process.returncode != 0:
+        raise RuntimeError(f"gmx check failed for {path}:\n{output}")
+    match = re.search(r"^\s*Coords\s+(\d+)\b", output, flags=re.MULTILINE)
+    if match is None:
+        raise RuntimeError(f"Could not determine frame count for {path} from gmx check")
+    return int(match.group(1))
+
 class GMXConvertConverterFrame(wx.Frame):
     def __init__(self):
         super().__init__(parent=None, title="GROMACS .trr to .xtc Compressor", size=(680, 530))
+        self.worker = None
         self.init_ui()
+        self.Bind(wx.EVT_CLOSE, self.on_close)
         self.Centre()
+
+    def on_close(self, event):
+        if self.worker is not None and self.worker.is_alive():
+            wx.MessageBox(
+                "Wait for the active conversion to finish before closing this window.",
+                "Conversion in progress",
+                wx.OK | wx.ICON_INFORMATION,
+            )
+            event.Veto()
+            return
+        event.Skip()
 
     def init_ui(self):
         panel = wx.Panel(self)
@@ -76,7 +107,10 @@ class GMXConvertConverterFrame(wx.Frame):
 
         # Run conversion in a separate thread to keep GUI responsive
         thread = threading.Thread(target=self.run_conversion, args=(work_dir, pattern, group_choice))
-        thread.daemon = True
+        # A daemon worker can be killed as the GUI exits, leaving a truncated
+        # but superficially valid XTC behind.
+        thread.daemon = False
+        self.worker = thread
         thread.start()
 
     def run_conversion(self, work_dir, pattern, group_choice):
@@ -97,6 +131,9 @@ class GMXConvertConverterFrame(wx.Frame):
             
             gro_file = os.path.join(dir_name, f"{base_name}.gro")
             out_xtc = os.path.join(dir_name, f"{base_name}.xtc")
+            tmp_xtc = os.path.join(
+                dir_name, f".{base_name}.{os.getpid()}.part.xtc"
+            )
 
             # Check if matching structure (.gro) exists
             if not os.path.exists(gro_file):
@@ -110,7 +147,7 @@ class GMXConvertConverterFrame(wx.Frame):
                 "gmx", "trjconv",
                 "-f", file_path,
                 "-s", gro_file,
-                "-o", out_xtc
+                "-o", tmp_xtc
             ]
 
             try:
@@ -127,12 +164,26 @@ class GMXConvertConverterFrame(wx.Frame):
                 stdout, stderr = process.communicate(input=f"{group_choice}\n")
 
                 if process.returncode == 0:
-                    self.log(f"    --> Successfully created: {out_xtc}")
+                    input_frames = gmx_frame_count(file_path)
+                    output_frames = gmx_frame_count(tmp_xtc)
+                    if output_frames != input_frames:
+                        raise RuntimeError(
+                            "Frame-count mismatch: "
+                            f"TRR has {input_frames}, temporary XTC has {output_frames}"
+                        )
+                    os.replace(tmp_xtc, out_xtc)
+                    self.log(
+                        f"    --> Successfully created and validated "
+                        f"{output_frames} frames: {out_xtc}"
+                    )
                 else:
                     self.log(f"    --> ERROR processing {base_name}:\n{stderr}")
 
             except Exception as e:
                 self.log(f"    --> Failed to execute GROMACS: {str(e)}")
+            finally:
+                if os.path.exists(tmp_xtc):
+                    os.remove(tmp_xtc)
 
             # Update Progress Bar
             progress = int((idx / total_files) * 100)
