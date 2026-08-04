@@ -40,8 +40,8 @@ except ImportError as exc:  # pragma: no cover - depends on the desktop system
     raise SystemExit(1) from exc
 
 
-GUI_VERSION = "1.0.3"
-ENGINE_VERSION = "7.1.0"
+GUI_VERSION = "1.0.6"
+ENGINE_VERSION = "9.1.0"
 APP_TITLE = "Desmond → gmx_MMPBSA"
 CONFIG_DIR = Path.home() / ".config" / "desmond_gmxmmpbsa_wx"
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
@@ -1267,7 +1267,7 @@ import importlib.util
 import shutil
 import sys
 
-modules = ["numpy", "mdtraj", "networkx", "parmed"]
+modules = ["numpy", "scipy", "mdtraj", "networkx", "parmed"]
 programs = ["gmx", "gmx_MMPBSA", "parmchk2", "tleap", "antechamber", "mpirun"]
 failed = False
 print("Python:", sys.executable)

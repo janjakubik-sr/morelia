@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import os
@@ -29,6 +30,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import unicodedata
 import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict, deque
@@ -40,15 +42,20 @@ import mdtraj as md
 import networkx as nx
 import numpy as np
 
-__version__ = "7.1.0"
+__version__ = "9.1.0"
 
 AA_NAMES = {
     "ALA", "ARG", "ASN", "ASP", "ASH", "CYS", "CYM", "CYX", "GLN",
     "GLU", "GLH", "GLY", "HIS", "HID", "HIE", "HIP", "ILE", "LEU",
     "LYS", "LYN", "MET", "PHE", "PRO", "SER", "THR", "TRP", "TYR",
-    "VAL", "ACE", "NME",
+    "VAL", "ACE", "NME", "NMA",
 }
 VARIANT_NAMES = AA_NAMES | {"HID", "HIE", "HIP", "CYX", "CYM", "ASH", "GLH", "LYN"}
+
+# Desmond/Schrodinger residue aliases that describe standard Amber cap
+# chemistry but use different residue or atom nomenclature.  NMA is the
+# methylamide cap represented by ff19SB as NME.
+SOURCE_TEMPLATE_ALIASES = {"NMA": "NME"}
 CHAIN_IDS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 COVALENT_RADII_A = {
     "H": 0.31, "B": 0.84, "C": 0.76, "N": 0.71, "O": 0.66,
@@ -516,7 +523,7 @@ def separate_noncontiguous_hydrogen_caps(
             None,
         )
         hxt_atoms: list[GroAtom] = []
-        if carbonyl is not None and key[1].upper() not in {"ACE", "NME"}:
+        if carbonyl is not None and SOURCE_TEMPLATE_ALIASES.get(key[1].upper(), key[1].upper()) not in {"ACE", "NME"}:
             for atom in residue_atoms:
                 if atom.element.upper() != "H":
                     continue
@@ -734,7 +741,7 @@ def assign_hydrogen_caps_to_segment_boundaries(
                 raise ValueError(
                     f"Carbonyl-H cap on internal residue {cap.residue_key}; expected a segment C terminus"
                 )
-            if residue.source_resname == "NME":
+            if SOURCE_TEMPLATE_ALIASES.get(residue.source_resname, residue.source_resname) == "NME":
                 raise ValueError(
                     f"Residue {cap.residue_key} is already NME but also contains a carbonyl-bound H"
                 )
@@ -746,7 +753,7 @@ def assign_hydrogen_caps_to_segment_boundaries(
                     f"Duplicate-H cap on internal residue {cap.residue_key}; "
                     "expected a segment N terminus"
                 )
-            if residue.source_resname == "ACE":
+            if SOURCE_TEMPLATE_ALIASES.get(residue.source_resname, residue.source_resname) == "ACE":
                 raise ValueError(
                     f"Residue {cap.residue_key} is already ACE but also contains a duplicate N-H"
                 )
@@ -873,7 +880,7 @@ def detect_disulfides(
 
 
 def base_variant(residue: ResidueBlock, cyx_indices: set[int], residue_index: int) -> str:
-    name = residue.source_resname
+    name = SOURCE_TEMPLATE_ALIASES.get(residue.source_resname, residue.source_resname)
     names = {atom.source_name for atom in residue.atoms}
     if name in {"HIS", "HID", "HIE", "HIP"}:
         has_hd1 = "HD1" in names
@@ -942,13 +949,28 @@ def map_protein_names(
     mapping: dict[str, str] = {}
     remaining = set(template_names)
     if template_name in {"ACE", "NME"}:
+        # Schrodinger/Desmond uses several equivalent methyl-cap naming
+        # schemes.  Examples observed in VMD GRO exports are:
+        #   ACE: CH3, HH31, HH32, HH33
+        #   NME: N, CH3, H, HH31, HH32, HH33
+        #   NMA: N, CA, H, HA1, HA2, HA3
+        # ff19SB names the methyl hydrogens H1/H2/H3 and the NME methyl
+        # carbon C.  Resolve these aliases explicitly rather than relying on
+        # one historical 1HH3/2HH3/3HH3 convention.
+        def cap_target(source_name: str) -> str:
+            upper = source_name.upper()
+            if template_name == "NME" and upper in {"CH3", "CA"}:
+                return "C"
+            if template_name == "ACE" and upper == "CH3":
+                return "CH3"
+            for pattern in (r"HH3([123])", r"([123])HH3", r"HA([123])", r"([123])HA"):
+                match = re.fullmatch(pattern, upper)
+                if match:
+                    return "H" + match.group(1)
+            return source_name
+
         for source in source_names:
-            if source == "CH3":
-                target = "C" if template_name == "NME" else "CH3"
-            elif re.fullmatch(r"[123]HH3", source):
-                target = "H" + source[0]
-            else:
-                target = source
+            target = cap_target(source)
             if target not in remaining:
                 raise ValueError(
                     f"Cannot map {source} to {target} in {template_name}; "
@@ -1018,6 +1040,107 @@ def map_protein_names(
             f"unresolved={unresolved}, unused={sorted(remaining)}"
         )
     return mapping
+
+def _template_prefix(template_name: str) -> str:
+    """Return the Amber terminal prefix (N/C/empty) for an AA template."""
+
+    if (
+        len(template_name) > 1
+        and template_name[0] in {"N", "C"}
+        and template_name[1:] in VARIANT_NAMES
+    ):
+        return template_name[0]
+    return ""
+
+
+def _mapped_template_bonds_are_geometric(
+    residue: ResidueBlock,
+    mapping: dict[str, str],
+    template_bonds: Sequence[tuple[str, str]],
+    box: np.ndarray,
+) -> bool:
+    """Validate that every candidate-template bond exists geometrically."""
+
+    source_by_name = atom_lookup(residue)
+    target_to_source = {target: source for source, target in mapping.items()}
+    expected_source_bonds: set[frozenset[str]] = set()
+    for target_left, target_right in template_bonds:
+        if target_left not in target_to_source or target_right not in target_to_source:
+            return False
+        source_left = target_to_source[target_left]
+        source_right = target_to_source[target_right]
+        expected_source_bonds.add(frozenset((source_left, source_right)))
+        left = source_by_name[source_left]
+        right = source_by_name[source_right]
+        delta = minimum_image(right.xyz_nm - left.xyz_nm, box)
+        distance = float(np.linalg.norm(delta))
+        if left.element == "H" or right.element == "H":
+            if not 0.065 <= distance <= 0.140:
+                return False
+        elif not 0.090 <= distance <= 0.190:
+            return False
+
+    # For the deliberately small ALA/GLY surrogate set, require the complete
+    # inferred intrarezidue covalent graph to equal the template graph.  This
+    # prevents a mere atom-name coincidence from triggering substitution.
+    inferred = {
+        frozenset((residue.atoms[left].source_name, residue.atoms[right].source_name))
+        for left, right in infer_coordinate_bonds(residue.atoms, box)
+    }
+    return inferred == expected_source_bonds
+
+
+def find_exact_truncated_residue_surrogate(
+    residue: ResidueBlock,
+    expected_template: str,
+    templates: dict[str, list[str]],
+    template_bonds: dict[str, list[tuple[str, str]]],
+    box: np.ndarray,
+) -> tuple[str, dict[str, str], str] | None:
+    """Find a conservative ff19SB surrogate for a truncated side chain.
+
+    Some prepared crystal constructs contain a residue labelled with its
+    sequence identity even though unresolved side-chain atoms were deleted and
+    the remaining C-beta was hydrogen-capped.  The resulting atom set can be
+    exactly alanine-like (or, less commonly, glycine-like) and cannot be loaded
+    as the original ff19SB residue because LEaP would add an unsampled side
+    chain.
+
+    Automatic substitution is deliberately restricted to exact ALA/GLY atom
+    sets with valid covalent geometry and the same terminal state as the
+    expected template.  No other side-chain reconstruction or residue guessing
+    is performed.
+    """
+
+    expected_base = expected_template[1:] if _template_prefix(expected_template) else expected_template
+    if expected_base in {"ALA", "GLY", "ACE", "NME"}:
+        return None
+    prefix = _template_prefix(expected_template)
+    source_names = list(atom_lookup(residue))
+
+    for base in ("ALA", "GLY"):
+        candidate = prefix + base
+        if candidate not in templates:
+            continue
+        if len(source_names) != len(templates[candidate]):
+            continue
+        try:
+            mapping = map_protein_names(source_names, templates[candidate], candidate)
+        except ValueError:
+            continue
+        if not _mapped_template_bonds_are_geometric(
+            residue, mapping, template_bonds[candidate], box
+        ):
+            continue
+        reason = (
+            f"source {residue.source_resname}{residue.source_resid} is labelled "
+            f"{expected_base} but its complete retained atom set and covalent "
+            f"geometry exactly match {candidate}; use the sampled {base}-like "
+            "chemistry rather than allowing LEaP to invent missing side-chain atoms"
+        )
+        return candidate, mapping, reason
+    return None
+
 
 def parse_mol2(path: Path) -> tuple[list[dict[str, object]], list[tuple[int, int, str]]]:
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -1694,6 +1817,76 @@ def write_atom_mapping(path: Path, atoms: Sequence[OutputAtom]) -> None:
             )
 
 
+def file_sha256(path: Path) -> str:
+    """Return a stable SHA-256 digest for a prepared input file."""
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def files_are_identical(left: Path, right: Path) -> bool:
+    if not left.is_file() or not right.is_file():
+        return False
+    if left.stat().st_size != right.stat().st_size:
+        return False
+    return file_sha256(left) == file_sha256(right)
+
+
+def archive_stale_preparation_state(outdir: Path) -> Path | None:
+    """Archive state that must never be reused by a fresh prepare command.
+
+    A fresh prepare into an existing directory writes new base PDB/XTC files.
+    Old cap-repair reports and capfixed coordinates then refer to the previous
+    preparation.  Keeping those files under their live names allowed a stale
+    ``validation_passed`` report to suppress cap repair.  Move the prior state
+    aside before generating new coordinates.
+    """
+
+    exact_names = {
+        "preparation_report.json",
+        "cap_clash_repair.json",
+        "cap_rotation_angles.tsv",
+        "steric_preflight.json",
+        "steric_preflight_before.json",
+        "steric_clashes.tsv",
+        "steric_clashes_before.tsv",
+        "steric_preflight.stdout.log",
+        "undefined_energy_report.json",
+        "FINAL_RESULTS_MMPBSA.dat",
+        "FINAL_RESULTS_MMPBSA.csv",
+        "binding_energy_summary.json",
+        "binding_energy_summary_warning.json",
+    }
+    patterns = (
+        "*_capfix.pdb",
+        "*_capfix.xtc",
+        "*_stericfix*.pdb",
+        "*_stericfix*.xtc",
+        "*.before_capfix",
+    )
+    candidates = {outdir / name for name in exact_names}
+    for pattern in patterns:
+        candidates.update(outdir.glob(pattern))
+    existing = sorted(path for path in candidates if path.exists())
+    if not existing:
+        return None
+
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    archive = outdir / "previous_run_state" / timestamp
+    counter = 1
+    while archive.exists():
+        archive = outdir / "previous_run_state" / f"{timestamp}_{counter}"
+        counter += 1
+    archive.mkdir(parents=True, exist_ok=False)
+    for path in existing:
+        destination = archive / path.name
+        shutil.move(str(path), str(destination))
+    return archive
+
+
 def parse_pdb_atoms(path: Path) -> list[dict[str, object]]:
     atoms: list[dict[str, object]] = []
     with path.open("rt", encoding="utf-8", errors="replace") as handle:
@@ -1783,6 +1976,9 @@ def prepare_workflow(args: argparse.Namespace) -> Path:
         if not path.is_file():
             raise FileNotFoundError(path)
     outdir.mkdir(parents=True, exist_ok=True)
+    archived_state = archive_stale_preparation_state(outdir)
+    if archived_state is not None:
+        print(f"Archived stale prior-run state in {archived_state}")
 
     _title, all_atoms, gro_box = parse_gro(gro)
     raw_protein_blocks = contiguous_residue_blocks(all_atoms, AA_NAMES)
@@ -1851,6 +2047,7 @@ def prepare_workflow(args: argparse.Namespace) -> Path:
     output_atoms: list[OutputAtom] = []
     output_bonds: list[tuple[int, int]] = []
     protein_report: list[dict[str, object]] = []
+    template_substitutions: list[dict[str, object]] = []
     residue_atom_index: dict[tuple[int, str], int] = {}
     synthetic_caps: list[SyntheticCapSpec] = []
     segment_entries: dict[int, list[dict[str, int]]] = defaultdict(list)
@@ -1924,12 +2121,33 @@ def prepare_workflow(args: argparse.Namespace) -> Path:
         template = choose_template(
             residue_index, residue, segments, cyx_indices, templates, gro_box
         )
+        source_by_name = atom_lookup(residue)
+        surrogate_reason = ""
+        try:
+            name_mapping = map_protein_names(
+                list(source_by_name), templates[template], template
+            )
+        except ValueError as original_error:
+            surrogate = find_exact_truncated_residue_surrogate(
+                residue, template, templates, template_bonds, gro_box
+            )
+            if surrogate is None:
+                raise original_error
+            selected_template, name_mapping, surrogate_reason = surrogate
+            template_substitutions.append(
+                {
+                    "source_resid": residue.source_resid,
+                    "source_resname": residue.source_resname,
+                    "expected_template": template,
+                    "selected_template": selected_template,
+                    "source_atom_names": ",".join(list(source_by_name)),
+                    "reason": surrogate_reason,
+                }
+            )
+            template = selected_template
+
         residue.amber_template = template
         residue.output_resname = pdb_resname_from_template(template)
-        source_by_name = atom_lookup(residue)
-        name_mapping = map_protein_names(
-            list(source_by_name), templates[template], template
-        )
         target_to_source = {target: source for source, target in name_mapping.items()}
         chain_id = CHAIN_IDS[residue.chain_index]
         local_output: dict[str, int] = {}
@@ -1963,7 +2181,9 @@ def prepare_workflow(args: argparse.Namespace) -> Path:
                 "amber_template": template,
                 "output_resname": residue.output_resname,
                 "atom_count": len(residue.atoms),
-                "source_type": "source_residue",
+                "source_type": (
+                    "source_residue_surrogate" if surrogate_reason else "source_residue"
+                ),
                 "replaced_source_atom_index_1based": "",
                 "replaced_source_atom_name": "",
             }
@@ -2227,6 +2447,22 @@ def prepare_workflow(args: argparse.Namespace) -> Path:
         writer = csv.DictWriter(handle, fieldnames=fieldnames, delimiter="\t")
         writer.writeheader()
         writer.writerows(protein_report)
+
+    with (outdir / "template_substitutions.tsv").open(
+        "wt", encoding="utf-8", newline=""
+    ) as handle:
+        fieldnames = [
+            "source_resid",
+            "source_resname",
+            "expected_template",
+            "selected_template",
+            "source_atom_names",
+            "reason",
+        ]
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, delimiter="\t")
+        writer.writeheader()
+        writer.writerows(template_substitutions)
+
     with (outdir / "ligand_mapping.tsv").open(
         "wt", encoding="utf-8", newline=""
     ) as handle:
@@ -2486,6 +2722,7 @@ def prepare_workflow(args: argparse.Namespace) -> Path:
         "source_frame_indices": expected_source_frame_indices,
         "hydrogen_cap_replacements": cap_rows,
         "internal_backbone_hydrogen_corrections": internal_h_rows,
+        "template_substitutions": template_substitutions,
         "disulfides": disulfide_rows,
         "ligand_charge": charge_report,
         "ligand_parameterization": ligand_parameterization,
@@ -2513,6 +2750,7 @@ def prepare_workflow(args: argparse.Namespace) -> Path:
             "internal_backbone_hydrogen_corrections": (
                 "internal_backbone_hydrogen_corrections.tsv"
             ),
+            "template_substitutions": "template_substitutions.tsv",
         },
     }
     (outdir / "preparation_report.json").write_text(
@@ -3312,6 +3550,100 @@ def parse_binding_energy(result_file: Path) -> dict[str, object]:
     return summary
 
 
+
+def run_topology_aware_steric_preflight(
+    workdir: Path, report: dict[str, object]
+) -> dict[str, object]:
+    """Validate actual Amber LJ geometry before the expensive endpoint run.
+
+    The preflight scans every frame with COM.prmtop exclusions and Lennard-
+    Jones parameters.  It may alter only residues explicitly recorded as
+    synthetic ACE/NME caps; source protein and ligand coordinates are never
+    changed automatically.
+    """
+
+    script = Path(__file__).with_name("steric_preflight.py")
+    if not script.is_file():
+        raise FileNotFoundError(f"Bundled steric preflight script was not found: {script}")
+    repair_script = Path(__file__).with_name("repair_synthetic_caps.py")
+    if not repair_script.is_file():
+        raise FileNotFoundError(f"Bundled cap-repair script was not found: {repair_script}")
+    command = [
+        sys.executable,
+        str(script),
+        "--workdir", str(workdir),
+        "--repair-script", str(repair_script),
+    ]
+    run_logged(command, workdir, workdir / "steric_preflight.stdout.log")
+    report_path = workdir / "steric_preflight.json"
+    if not report_path.is_file():
+        raise RuntimeError("Steric preflight completed without steric_preflight.json")
+    result = json.loads(report_path.read_text(encoding="utf-8", errors="replace"))
+    if not bool(result.get("validation_passed", False)):
+        raise RuntimeError(
+            "Topology-aware steric preflight failed. See steric_preflight.json "
+            "and steric_clashes.tsv for the exact frame and atom pair."
+        )
+    report["topology_aware_steric_preflight"] = result
+    (workdir / "preparation_report.json").write_text(
+        json.dumps(report, indent=2) + "\n", encoding="utf-8"
+    )
+    return result
+
+
+def diagnose_undefined_energy_outputs(workdir: Path) -> dict[str, object]:
+    """Record overflow/NaN fields retained in thread-specific Sander outputs."""
+
+    candidates: list[Path] = []
+    for pattern in (
+        "_GMXMMPBSA_*_pb.mdout.*",
+        "_GMXMMPBSA_*_gb.mdout.*",
+        "_GMXMMPBSA_*mdout*",
+    ):
+        candidates.extend(workdir.glob(pattern))
+    files = sorted(set(path for path in candidates if path.is_file()))
+    findings: list[dict[str, object]] = []
+    for path in files:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        energy_record = 0
+        for line_number, line in enumerate(lines, start=1):
+            if re.search(r"\bNSTEP\s+ENERGY\s+RMS", line):
+                energy_record += 1
+            undefined = "*" in line or bool(re.search(r"\bnan\b|\binf(?:inity)?\b", line, flags=re.I))
+            if not undefined:
+                continue
+            if not re.search(
+                r"BOND|ANGLE|DIHED|VDWAALS|EEL|EGB|EPB|ENPOLAR|EDISPER|1-4|ENERGY",
+                line,
+                flags=re.I,
+            ):
+                continue
+            start = max(0, line_number - 7)
+            stop = min(len(lines), line_number + 4)
+            findings.append(
+                {
+                    "file": path.name,
+                    "line_number": line_number,
+                    "local_energy_record_1based": energy_record or None,
+                    "line": line,
+                    "context": lines[start:stop],
+                }
+            )
+    report = {
+        "workdir": str(workdir),
+        "sander_output_files_examined": [path.name for path in files],
+        "undefined_energy_fields": findings,
+        "steric_preflight_report": (
+            str((workdir / "steric_preflight.json").resolve())
+            if (workdir / "steric_preflight.json").is_file()
+            else None
+        ),
+    }
+    (workdir / "undefined_energy_report.json").write_text(
+        json.dumps(report, indent=2) + "\n", encoding="utf-8"
+    )
+    return report
+
 def run_workflow(args: argparse.Namespace) -> Path:
     workdir = Path(args.workdir).expanduser().resolve()
     report_path = workdir / "preparation_report.json"
@@ -3437,6 +3769,24 @@ def run_workflow(args: argparse.Namespace) -> Path:
     print("\nTopology validation passed:")
     print(json.dumps(topology_validation, indent=2))
 
+    steric_validation = run_topology_aware_steric_preflight(workdir, report)
+    print("\nTopology-aware steric preflight passed:")
+    print(
+        json.dumps(
+            {
+                "frames": steric_validation.get("frames"),
+                "global_minimum_interacting_pair": steric_validation.get(
+                    "global_minimum_interacting_pair"
+                ),
+                "global_maximum_positive_pair_lj": steric_validation.get(
+                    "global_maximum_positive_pair_lj"
+                ),
+                "repair_history": steric_validation.get("repair_history", []),
+            },
+            indent=2,
+        )
+    )
+
     complex_pdb = str(files["complex_pdb"])
     reference_pdb = str(files.get("reference_pdb", files["complex_pdb"]))
     complex_xtc = str(files["complex_xtc"])
@@ -3485,7 +3835,18 @@ def run_workflow(args: argparse.Namespace) -> Path:
     if args.np > 1:
         assert mpirun is not None
         command = [mpirun, "-np", str(args.np)] + command
-    run_logged(command, workdir, workdir / "gmx_MMPBSA.stdout.log")
+    try:
+        run_logged(command, workdir, workdir / "gmx_MMPBSA.stdout.log")
+    except subprocess.CalledProcessError as exc:
+        diagnosis = diagnose_undefined_energy_outputs(workdir)
+        if diagnosis.get("undefined_energy_fields"):
+            raise RuntimeError(
+                "gmx_MMPBSA failed because Sander wrote one or more undefined/"
+                "overflowed energy fields. Exact mdout context was saved to "
+                "undefined_energy_report.json; topology-aware geometry details "
+                "are in steric_preflight.json and steric_clashes.tsv."
+            ) from exc
+        raise
 
     result_file = workdir / "FINAL_RESULTS_MMPBSA.dat"
     csv_file = workdir / "FINAL_RESULTS_MMPBSA.csv"
@@ -3523,20 +3884,13 @@ def run_workflow(args: argparse.Namespace) -> Path:
 
 
 def apply_synthetic_cap_clash_repair(outdir: Path) -> dict[str, object]:
-    """Run the bundled cap optimizer after trajectory preparation.
+    """Generate and select validated synthetic-cap coordinates.
 
-    The topology and atom order are unchanged.  Only ACE/NME atoms in frames
-    with nonbonded contacts below 0.15 nm can rotate about their peptide anchor
-    bond.  Safe systems therefore remain coordinate-identical.
+    The repaired PDB/XTC are kept as explicit ``*_capfix`` files and the run
+    manifest is updated to reference them.  The base prepared coordinates are
+    left immutable.  A prior report is reused only when its output files still
+    exist and are demonstrably associated with the current preparation.
     """
-
-    existing_report_path = outdir / "cap_clash_repair.json"
-    if existing_report_path.is_file():
-        existing_report = json.loads(
-            existing_report_path.read_text(encoding="utf-8", errors="replace")
-        )
-        if bool(existing_report.get("validation_passed", False)):
-            return existing_report
 
     repair_script = Path(__file__).with_name("repair_synthetic_caps.py")
     if not repair_script.is_file():
@@ -3552,27 +3906,114 @@ def apply_synthetic_cap_clash_repair(outdir: Path) -> dict[str, object]:
     prepared_files = preparation_report.get("files", {})
     if not isinstance(prepared_files, dict):
         raise ValueError("Invalid preparation_report.json: files must be an object")
+
     input_pdb_name = str(prepared_files.get("complex_pdb", "complex_amber_order.pdb"))
     input_xtc_name = str(prepared_files.get("complex_xtc", "complex_stride10.xtc"))
-    input_pdb_path = Path(input_pdb_name)
-    input_xtc_path = Path(input_xtc_name)
+    input_pdb_path = outdir / Path(input_pdb_name).name
+    input_xtc_path = outdir / Path(input_xtc_name).name
+
+    existing_report_path = outdir / "cap_clash_repair.json"
+    if existing_report_path.is_file():
+        existing_report = json.loads(
+            existing_report_path.read_text(encoding="utf-8", errors="replace")
+        )
+        if bool(existing_report.get("validation_passed", False)):
+            caps = existing_report.get("caps", [])
+            if not caps:
+                preparation_report["synthetic_cap_clash_repair"] = existing_report
+                preparation_report["miniapp_version"] = __version__
+                preparation_report_path.write_text(
+                    json.dumps(preparation_report, indent=2) + "\n", encoding="utf-8"
+                )
+                return existing_report
+
+            reported_pdb = outdir / Path(str(existing_report.get("output_pdb", ""))).name
+            reported_xtc = outdir / Path(str(existing_report.get("output_xtc", ""))).name
+            manifest_uses_reported = (
+                Path(input_pdb_name).name == reported_pdb.name
+                and Path(input_xtc_name).name == reported_xtc.name
+            )
+            if manifest_uses_reported and reported_pdb.is_file() and reported_xtc.is_file():
+                preparation_report["synthetic_cap_clash_repair"] = existing_report
+                preparation_report["miniapp_version"] = __version__
+                preparation_report_path.write_text(
+                    json.dumps(preparation_report, indent=2) + "\n", encoding="utf-8"
+                )
+                return existing_report
+
+            # Compatibility recovery for folders produced by versions 4-9:
+            # those versions replaced the base files and retained both a
+            # pre-capfix backup and a separate validated capfix output.  A
+            # later prepare could overwrite the base files while leaving the
+            # old report.  Reuse is safe only when the current base files are
+            # byte-identical to the recorded backups.
+            backup_pdb = input_pdb_path.with_suffix(input_pdb_path.suffix + ".before_capfix")
+            backup_xtc = input_xtc_path.with_suffix(input_xtc_path.suffix + ".before_capfix")
+            if (
+                reported_pdb.is_file()
+                and reported_xtc.is_file()
+                and files_are_identical(input_pdb_path, backup_pdb)
+                and files_are_identical(input_xtc_path, backup_xtc)
+            ):
+                prepared_files["complex_pdb"] = reported_pdb.name
+                prepared_files["complex_xtc"] = reported_xtc.name
+                existing_report["recovered_from_overwritten_active_files"] = True
+                existing_report["selected_pdb_sha256"] = file_sha256(reported_pdb)
+                existing_report["selected_xtc_sha256"] = file_sha256(reported_xtc)
+                preparation_report["files"] = prepared_files
+                preparation_report["synthetic_cap_clash_repair"] = existing_report
+                preparation_report["miniapp_version"] = __version__
+                preparation_report_path.write_text(
+                    json.dumps(preparation_report, indent=2) + "\n", encoding="utf-8"
+                )
+                existing_report_path.write_text(
+                    json.dumps(existing_report, indent=2) + "\n", encoding="utf-8"
+                )
+                print(
+                    "Recovered validated capfixed PDB/XTC after the base files "
+                    "were overwritten by a later prepare run."
+                )
+                return existing_report
+
+        # The report cannot be tied safely to the current input files.  Keep
+        # it for audit and generate a fresh repair.
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        stale = existing_report_path.with_name(
+            existing_report_path.name + f".stale.{timestamp}"
+        )
+        existing_report_path.rename(stale)
+
+    # If the manifest currently points to a prior capfix name but no reusable
+    # report exists, return to the immutable base preparation before creating
+    # a new capfix file.
+    base_pdb = outdir / "complex_amber_order.pdb"
+    if base_pdb.is_file() and "_capfix" in input_pdb_path.stem:
+        input_pdb_path = base_pdb
+        input_pdb_name = base_pdb.name
+    base_xtc_candidates = sorted(
+        path for path in outdir.glob("complex_stride*.xtc")
+        if "_capfix" not in path.stem and "_stericfix" not in path.stem
+    )
+    if base_xtc_candidates and "_capfix" in input_xtc_path.stem:
+        input_xtc_path = base_xtc_candidates[0]
+        input_xtc_name = input_xtc_path.name
+
+    if not input_pdb_path.is_file():
+        raise FileNotFoundError(input_pdb_path)
+    if not input_xtc_path.is_file():
+        raise FileNotFoundError(input_xtc_path)
+
     output_pdb_name = f"{input_pdb_path.stem}_capfix{input_pdb_path.suffix}"
     output_xtc_name = f"{input_xtc_path.stem}_capfix{input_xtc_path.suffix}"
     command = [
         sys.executable,
         str(repair_script),
-        "--workdir",
-        str(outdir),
-        "--pdb",
-        input_pdb_name,
-        "--xtc",
-        input_xtc_name,
-        "--output-pdb",
-        output_pdb_name,
-        "--output-xtc",
-        output_xtc_name,
+        "--workdir", str(outdir),
+        "--pdb", input_pdb_name,
+        "--xtc", input_xtc_name,
+        "--output-pdb", output_pdb_name,
+        "--output-xtc", output_xtc_name,
         "--allow-no-caps",
-        "--backup-and-replace",
     ]
     subprocess.run(command, check=True)
     repair_report_path = outdir / "cap_clash_repair.json"
@@ -3582,10 +4023,27 @@ def apply_synthetic_cap_clash_repair(outdir: Path) -> dict[str, object]:
     if not bool(repair_report.get("validation_passed", False)):
         raise RuntimeError("Synthetic-cap clash validation failed")
 
+    if repair_report.get("caps"):
+        output_pdb = outdir / output_pdb_name
+        output_xtc = outdir / output_xtc_name
+        if not output_pdb.is_file() or not output_xtc.is_file():
+            raise RuntimeError("Validated cap-repair outputs are missing")
+        prepared_files["complex_pdb"] = output_pdb.name
+        prepared_files["complex_xtc"] = output_xtc.name
+        repair_report["selected_pdb_sha256"] = file_sha256(output_pdb)
+        repair_report["selected_xtc_sha256"] = file_sha256(output_xtc)
+    else:
+        prepared_files["complex_pdb"] = input_pdb_path.name
+        prepared_files["complex_xtc"] = input_xtc_path.name
+
+    preparation_report["files"] = prepared_files
     preparation_report["synthetic_cap_clash_repair"] = repair_report
     preparation_report["miniapp_version"] = __version__
     preparation_report_path.write_text(
         json.dumps(preparation_report, indent=2) + "\n", encoding="utf-8"
+    )
+    repair_report_path.write_text(
+        json.dumps(repair_report, indent=2) + "\n", encoding="utf-8"
     )
     return repair_report
 
