@@ -20,6 +20,12 @@ height = 800
 #IPython console in own terminal window
 cmdIP = 'gnome-terminal -- ipython3'
 
+#AutoDock dir
+AutoDock_dir='/home/roshi/AutoDock/'
+
+#YASARA dir
+YASARA_dir='/home/roshi/yasara/'
+
 #Grace
 cmdGG = 'ggrace'
 #cmdGG = 'xmgrace'

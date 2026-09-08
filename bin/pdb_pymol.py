@@ -15,7 +15,7 @@ if os.path.isfile("temp.log"):
 err = ''
 
 #select pdf file
-dialog = wx.FileDialog(None, "Choose yob file to convert", os.getcwd(), "","*.pdb", wx.FD_OPEN)
+dialog = wx.FileDialog(None, "Choose yob file to convert", os.getcwd(), "","*.pdb*", wx.FD_OPEN)
 if dialog.ShowModal() == wx.ID_OK:
     pdb=dialog.GetPath()
     dialog.Destroy()

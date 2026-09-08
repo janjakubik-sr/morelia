@@ -1,0 +1,63 @@
+Morelia Change.log
+==================
+
+2026-09-08
+---------------------------------------------------------
+
+morelia.py
+  * New "AutoDock" menu with items:
+      - smi to pdbqt       -> smi2pdbqt.py
+      - pdb to pdbqt       -> pdb2pdbqt.py
+      - Map receptor       -> map_receptor.py
+      - Batch docking      -> batch_dock.py
+  * New YASARA menu items:
+      - Dock - Extract top poses   -> extract_top_poses.py
+      - Make Si ligands topologies -> make_usertopo.py
+      - Minimize Si ligands        -> minimize_si_ligands.py
+
+pdb_pymol.py
+  * File dialog filter relaxed from *.pdb to *.pdb* (also matches .pdbqt).
+
+New scripts (bin/)
+  * smi2pdbqt.py         - batch SMILES -> PDBQT converter (RDKit + Meeko), wx GUI.
+  * pdb2pdbqt.py         - receptor PDB -> PDBQT converter (Meeko), wx GUI.
+  * map_receptor.py      - AutoGrid receptor mapping front-end, wx GUI.
+  * batch_dock.py        - batch docking with AutoDock-GPU, wx GUI.
+  * extract_top_poses.py - extract top-ranked poses from docking archives.
+  * make_usertopo.py     - generate YASARA usertopo_<NAME>.fof residue
+                           topology for silicon-containing ligands
+                           (C-analog GAFF2/AM1BCC parameterization, Si swapped
+                           back with formal charge).
+  * minimize_si_ligands.py - batch pipeline: detect Si in .sdf files, generate
+                           usertopo templates via make_usertopo.py, rebuild
+                           force fields, run YASARA minimization.
+
+
+
+2026-08-04  commit 0284f5d "Bug fixes"
+---------------------------------------
+
+Desmond analysis scripts (bin/)
+  * Lig_RMSD.py, PL_Contacts.py, Prot_BB_RMSD.py, Prot_RMSF.py rewritten:
+    modular functions instead of exec()-based hacks, support for one or more
+    input directories, matplotlib plotting, and proper wx error dialogs.
+
+Desmond -> gmx_MMPBSA workflow (bin/desmond_gmxMMPBSA/)
+  * Engine desmond_gmxmmpbsa.py bumped 7.1.0 -> 9.1.0:
+      - support for the NMA methylamide cap (mapped to ff19SB NME),
+      - explicit cap atom-name alias resolution (CH3/CA, HH3x/xHH3/HAx/xHA)
+        instead of relying on one historical naming convention,
+      - template-prefix handling for N-/C-terminal residue variants,
+      - geometric validation of mapped template bonds.
+  * GUI desmond_gmxmmpbsa_wx.py bumped 1.0.3 -> 1.0.6; dependency check now
+    also requires scipy.
+  * New steric_preflight.py: topology-aware steric clash preflight for
+    prepared trajectories using the Amber COM.prmtop Lennard-Jones
+    parameters; only synthetic ACE/NME cap atoms are moved automatically.
+  * New helper scripts run_capfixed_recovery.sh (re-run single-trajectory
+    gmx_MMPBSA from validated *_capfix files) and run_gmx_structure_route.sh
+    (build Amber topologies directly from prepared PDB + Antechamber MOL2,
+    bypassing the ParmEd Amber -> GROMACS -> Amber round-trip).
+  * Timestamped .backup_* copies of engine, GUI, cap-repair and force-field
+    files archived under bin/desmond_gmxMMPBSA/.
+

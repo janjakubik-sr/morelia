@@ -68,6 +68,19 @@ class MainWindow(wx.Frame):
                 item = fileMenu.Append(id, label, helpText)
                 self.Bind(wx.EVT_MENU, handler, item)
 
+        autoDockMenu = wx.Menu()
+        for id, label, helpText, handler in \
+            [(wx.ID_ANY, 'smi to pdbqt', 'Convert SMILES files to PDBQT', self.OnSmi2Pdbqt),
+             (wx.ID_ANY, 'pdb to pdbqt', 'Prepare receptor PDB to PDBQT', self.OnPdb2Pdbqt),
+             (wx.ID_ANY, 'Map receptor', 'Run AutoGrid on receptor GPF', self.OnMapReceptor),
+             (wx.ID_ANY, 'Batch docking', 'Dock ligands to receptor with AutoDock-GPU', self.OnBatchDock),
+	      ]:
+            if id == None:
+                autoDockMenu.AppendSeparator()
+            else:
+                item = autoDockMenu.Append(id, label, helpText)
+                self.Bind(wx.EVT_MENU, handler, item)
+
         DesmondMenu = wx.Menu()
         for id, label, helpText, handler in \
             [(wx.ID_ANY, 'Align Trajectory', 'Align Trajectory', self.OnTrjAlign),
@@ -126,7 +139,10 @@ class MainWindow(wx.Frame):
              (wx.ID_ANY, 'Archive current folder', 'Compress to archive and clean current folder', self.OnArchive),
              (wx.ID_ANY, 'Dock - Local search', 'Dock using AutoLS', self.OnDockLS),
              (wx.ID_ANY, 'Dock - Rescore', 'Rescore docking poses', self.OnDockRe),
+             (wx.ID_ANY, 'Dock - Extract top poses', 'Extract top poses from docking archives', self.OnExtractTop),
              (wx.ID_ANY, 'Liagnd-Receptor interactions', 'Analyze interactions', self.OnInteractions),
+             (wx.ID_ANY, 'Make Si ligands topologies', 'Generate YASARA usertopo for Si ligands', self.OnMakeSiTopo),
+             (wx.ID_ANY, 'Minimize Si ligands', 'Minimize Si ligands with YASARA', self.OnMinSiLigands),
              (wx.ID_ANY, 'Hydrogen bonds', 'Find hydrogen bonds in the docking poses', self.OnHBonds),
              (wx.ID_ANY, 'Hydrophobic interactions', 'Find hydrophobic interactions in the docking poses', self.OnHPhob),
              (wx.ID_ANY, 'Ionic bonds', 'Find ionic bonds in the docking poses', self.OnIonic),
@@ -200,6 +216,7 @@ class MainWindow(wx.Frame):
                 
         menuBar = wx.MenuBar()
         menuBar.Append(fileMenu, 'File')
+        menuBar.Append(autoDockMenu, 'AutoDock')
         menuBar.Append(DesmondMenu, 'Desmond')
         menuBar.Append(GromacsMenu, 'Gromacs')
         menuBar.Append(pyMenu, 'Python')
@@ -275,6 +292,22 @@ class MainWindow(wx.Frame):
     def OnEdit(self, event):
         cmd = ('python '+str(install_dir)+'editor.py')
         subprocess.Popen(cmd, shell=True, stdin=None, stdout=None, stderr=None, close_fds=True)
+
+    def OnSmi2Pdbqt(self, event):
+        self.__log('Converting SMILES to PDBQT ...')
+        subprocess.Popen([sys.executable, os.path.join(str(install_dir), 'smi2pdbqt.py')])
+
+    def OnPdb2Pdbqt(self, event):
+        self.__log('Preparing receptor PDB to PDBQT ...')
+        subprocess.Popen([sys.executable, os.path.join(str(install_dir), 'pdb2pdbqt.py')])
+
+    def OnMapReceptor(self, event):
+        self.__log('Mapping receptor with AutoGrid ...')
+        subprocess.Popen([sys.executable, os.path.join(str(install_dir), 'map_receptor.py')])
+
+    def OnBatchDock(self, event):
+        self.__log('Batch docking with AutoDock-GPU ...')
+        subprocess.Popen([sys.executable, os.path.join(str(install_dir), 'batch_dock.py')])
 
     def OnShowRes(self, event):
         cmd = ('python '+str(install_dir)+'viewer.py')
@@ -411,12 +444,31 @@ class MainWindow(wx.Frame):
         tolog = log.read()
         self.__log(tolog)
 
+    def OnExtractTop(self, event):
+        self.__log('Extracting top poses ...')
+        exec_full(str(install_dir)+'extract_top_poses.py')
+        log = open('temp.log','r')
+        tolog = log.read()
+        self.__log(tolog)
+
     def OnInteractions(self, event):
         self.__log('Analyzing interactions ...')
         exec_full(str(install_dir)+'interactions.py')
         log = open('temp.log','r')
         tolog = log.read()
         self.__log(tolog)
+
+    def OnMakeSiTopo(self, event):
+        self.__log('Making Si ligand topology ...')
+        dialog = wx.FileDialog(self, "Choose Si ligand file", os.getcwd(), "", "SDF/MOL2 files (*.sdf;*.mol2)|*.sdf;*.mol2", wx.FD_OPEN)
+        if dialog.ShowModal() == wx.ID_OK:
+            selected=dialog.GetPath()
+            subprocess.Popen([sys.executable, os.path.join(str(install_dir), 'make_usertopo.py'), selected])
+        dialog.Destroy()
+
+    def OnMinSiLigands(self, event):
+        self.__log('Minimizing Si ligands ...')
+        subprocess.Popen([sys.executable, os.path.join(str(install_dir), 'minimize_si_ligands.py')])
 
     def OnHBonds(self, event):
         self.__log('Hydrogen bonds ...')
