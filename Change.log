@@ -1,6 +1,27 @@
 Morelia Change.log
 ==================
 
+2026-10-02
+---------------------------------------------------------
+
+morelia.py
+  * New YASARA menu item:
+      - Ligand distance    -> yasara_distance_app.py
+
+sort_poses.py
+  * If <target>_distances.tab (produced by yasara_distance_app.py) exists,
+    the per-pose receptor-ligand distances are appended as the last column
+    of <target>_sorted.csv.
+
+New scripts (bin/)
+  * yasara_distance_app.py - wx GUI that writes and runs a YASARA macro
+                             measuring the distance between a receptor
+                             residue atom and a ligand atom (name or
+                             element) for every docking pose; saves
+                             <target>_distances.tab.
+
+
+
 2026-09-08
 ---------------------------------------------------------
 

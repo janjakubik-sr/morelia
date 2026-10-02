@@ -30,6 +30,10 @@ Morelia provides the following groups of tools:
   - docking, rescoring, ligand preparation, virtual-screening helpers;
   - hydrogen-bond, hydrophobic, ionic, pi-cation, and pi-pi interaction
     analysis;
+  - measurement of distances between a receptor residue atom and a ligand
+    atom across docking poses (`yasara_distance_app.py`); pose sorting
+    optionally appends these distances as the last column of the sorted
+    results table;
   - PDB/membrane alignment and YOb conversion/inspection tools.
 - **Results and visualisation**
   - Grace plotting and graph viewing;

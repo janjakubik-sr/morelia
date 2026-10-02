@@ -31,6 +31,7 @@ if dialog.ShowModal() == wx.ID_OK:
     target_ionic=(str(target)+'_ionic.tab')
     target_cationPi=(str(target)+'_cationPi.tab')
     target_PiPi=(str(target)+'_PiPi.tab')
+    target_distances=(str(target)+'_distances.tab')
     #Info
     msg = (str(target)+' poses will be sorted.')
     dialog = wx.MessageDialog(None, msg, 'Info', wx.OK)
@@ -83,6 +84,14 @@ if dialog.ShowModal() == wx.ID_OK:
         PiPi = pd.read_csv(target_PiPi,delimiter='|')
         y_data = PiPi.loc[:," #____Pose"].astype(int)
         z_data = PiPi.loc[:," PiPi Residues"]
+        yz_data = pd.concat([y_data,z_data], ignore_index=False, axis=1)
+        table = pd.merge(table, yz_data, left_on='#Lig.',right_on=' #____Pose')
+        table = table.drop([' #____Pose'], axis=1)
+    #distances
+    if os.path.isfile(target_distances):
+        distances = pd.read_csv(target_distances,delimiter='|')
+        y_data = distances.loc[:," #____Pose"].astype(int)
+        z_data = distances.iloc[:,1]
         yz_data = pd.concat([y_data,z_data], ignore_index=False, axis=1)
         table = pd.merge(table, yz_data, left_on='#Lig.',right_on=' #____Pose')
         table = table.drop([' #____Pose'], axis=1)

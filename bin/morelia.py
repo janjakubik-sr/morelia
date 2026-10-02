@@ -140,7 +140,8 @@ class MainWindow(wx.Frame):
              (wx.ID_ANY, 'Dock - Local search', 'Dock using AutoLS', self.OnDockLS),
              (wx.ID_ANY, 'Dock - Rescore', 'Rescore docking poses', self.OnDockRe),
              (wx.ID_ANY, 'Dock - Extract top poses', 'Extract top poses from docking archives', self.OnExtractTop),
-             (wx.ID_ANY, 'Liagnd-Receptor interactions', 'Analyze interactions', self.OnInteractions),
+              (wx.ID_ANY, 'Liagnd-Receptor interactions', 'Analyze interactions', self.OnInteractions),
+              (wx.ID_ANY, 'Ligand distance to D3.32', 'Measure receptor residue - ligand atom distance in docking poses', self.OnLigandDistance),
              (wx.ID_ANY, 'Make Si ligands topologies', 'Generate YASARA usertopo for Si ligands', self.OnMakeSiTopo),
              (wx.ID_ANY, 'Minimize Si ligands', 'Minimize Si ligands with YASARA', self.OnMinSiLigands),
              (wx.ID_ANY, 'Hydrogen bonds', 'Find hydrogen bonds in the docking poses', self.OnHBonds),
@@ -457,6 +458,10 @@ class MainWindow(wx.Frame):
         log = open('temp.log','r')
         tolog = log.read()
         self.__log(tolog)
+
+    def OnLigandDistance(self, event):
+        self.__log('Measuring receptor-ligand distance ...')
+        subprocess.Popen([sys.executable, os.path.join(str(install_dir), 'yasara_distance_app.py')])
 
     def OnMakeSiTopo(self, event):
         self.__log('Making Si ligand topology ...')
