@@ -1,6 +1,32 @@
 Morelia Change.log
 ==================
 
+2026-10-15
+---------------------------------------------------------
+
+morelia.py
+  * New YASARA menu items:
+      - Docking - create complexes -> docking_complexes.py
+      - Top poses energies         -> top_pose_E.py
+      - YOb from smi               -> smi_em_yob.py
+
+New scripts (bin/)
+  * docking_complexes.py - creates YASARA docking complex scenes: for each
+                           ligand .yob in the working directory it adds the
+                           ligand to the *_complex.sce (receptor + docking
+                           box) and saves receptor-base_ligand_complex.sce
+                           into a receptor-base_ligand subfolder.
+  * top_pose_E.py        - extracts energies of top docking poses into
+                           top_poses_E.csv.
+  * smi_em_yob.py        - converts smi ligands to energy-minimized YOb
+                           files (via YASARA/smi_em_yob.mcr).
+
+New YASARA macros (bin/YASARA/)
+  * docking_complex.mcr  - macro template used by docking_complexes.py.
+  * smi_em_yob.mcr       - macro template used by smi_em_yob.py.
+
+
+
 2026-10-02
 ---------------------------------------------------------
 

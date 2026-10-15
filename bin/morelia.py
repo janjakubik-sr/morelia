@@ -140,6 +140,7 @@ class MainWindow(wx.Frame):
              (wx.ID_ANY, 'Dock - Local search', 'Dock using AutoLS', self.OnDockLS),
              (wx.ID_ANY, 'Dock - Rescore', 'Rescore docking poses', self.OnDockRe),
              (wx.ID_ANY, 'Dock - Extract top poses', 'Extract top poses from docking archives', self.OnExtractTop),
+             (wx.ID_ANY, 'Docking - create complexes', 'Create receptor-ligand complex scenes for docking', self.OnDockComplex),
               (wx.ID_ANY, 'Liagnd-Receptor interactions', 'Analyze interactions', self.OnInteractions),
               (wx.ID_ANY, 'Ligand distance to D3.32', 'Measure receptor residue - ligand atom distance in docking poses', self.OnLigandDistance),
              (wx.ID_ANY, 'Make Si ligands topologies', 'Generate YASARA usertopo for Si ligands', self.OnMakeSiTopo),
@@ -150,9 +151,11 @@ class MainWindow(wx.Frame):
              (wx.ID_ANY, 'Pi-cation', 'Find Pi-cation interactions in the docking poses', self.OnPiCat),
              (wx.ID_ANY, 'Pi-Pi', 'Find Pi-Pi interactions in the docking poses', self.OnPiPi),
              (wx.ID_ANY, 'Sort rescored poses', 'Sort rescored poses', self.OnSortPoses),
+             (wx.ID_ANY, 'Top poses energies', 'Extract energies of top poses', self.OnTopPosesE),
              (wx.ID_ANY, 'Virtual Screening - Ligand preparation', 'Prepare ligands for VS', self.OnLigPrep),
              (wx.ID_ANY, 'Virtual Screening - Rename ligands', 'Rename ligands for VS', self.OnLigVS),
              (wx.ID_ANY, 'YOb from mol2', 'Convert mol2 to YOb', self.OnMolYob),
+             (wx.ID_ANY, 'YOb from smi', 'Convert smi to YOb', self.OnSmiYob),
              (wx.ID_ANY, 'YOb to OPM PDB', 'Convert YOb to OPM PDB', self.OnYobOPM),
 	      ]:
             if id == None:
@@ -438,6 +441,13 @@ class MainWindow(wx.Frame):
         tolog = log.read()
         self.__log(tolog)
 
+    def OnDockComplex(self, event):
+        self.__log('Creating docking complexes ...')
+        exec_full(str(install_dir)+'docking_complexes.py')
+        log = open('temp.log','r')
+        tolog = log.read()
+        self.__log(tolog)
+
     def OnDockRe(self, event):
         self.__log('Rescoring ...')
         exec_full(str(install_dir)+'dock_rescore.py')
@@ -517,6 +527,16 @@ class MainWindow(wx.Frame):
         tolog = log.read()
         self.__log(tolog)
 
+    def OnTopPosesE(self, event):
+        self.__log('Extracting energies of top poses ...')
+        exec_full(str(install_dir)+'top_pose_E.py')
+        res = open('top_poses_E.csv','r')
+        tolog = res.read()
+        self.__log(tolog)
+        log = open('temp.log','r')
+        tolog = log.read()
+        self.__log(tolog)
+
     def OnLigPrep(self, event):
         self.__log('Preparing ligands ...')
         exec_full(str(install_dir)+'mol2_em_yob.py')
@@ -537,6 +557,10 @@ class MainWindow(wx.Frame):
         log = open('temp.log','r')
         tolog = log.read()
         self.__log(tolog)
+
+    def OnSmiYob(self, event):
+        self.__log('Converting ligands ...')
+        exec_full(str(install_dir)+'smi_em_yob.py')
 
     def OnYobOPM(self, event):
         self.__log('Converting ...')
