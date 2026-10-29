@@ -1,14 +1,14 @@
 #!/usrenv python
 #Installation directory with binaries
-install_dir = '/home/roshi/zoo/projects/morelia/bin/'
+install_dir = '$HOME/zoo/projects/morelia/bin/'
 #install_dir = 'C:\morelia\bin\'
 
 #Installation directory with documentation
-doc_dir = '/home/roshi/zoo/projects/morelia/Documentation/'
+doc_dir = '$HOME/zoo/projects/morelia/Documentation/'
 #install_dir = 'C:\morelia\Documentation\'
 
 #Installation directory with examples
-example_dir = '/home/roshi/zoo/projects/morelia/Examples/'
+example_dir = '$HOME/zoo/projects/morelia/Examples/'
 #example_dir = 'C:\morelia\Examples\'
 
 #size of main app window
@@ -21,15 +21,17 @@ height = 800
 cmdIP = 'gnome-terminal -- ipython3'
 
 #AutoDock dir
-AutoDock_dir='/home/roshi/AutoDock/'
+AutoDock_dir='$HOME/AutoDock/'
 
 #YASARA dir
-YASARA_dir='/home/roshi/yasara/'
+YASARA_dir='$HOME/yasara/'
 
 #Grace
 cmdGG = 'ggrace'
 #cmdGG = 'xmgrace'
 #cmdGG = 'gracegtk'
+
+cmdDesmond_gmxMMPBSA = '$HOME/desmond_gmxMMPBSA/run_desmond_gmxmmpbsa_wx.sh'
 
 #Grace batch mode
 cmdGB = 'ggrace -batch'

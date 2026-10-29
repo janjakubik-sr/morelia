@@ -20,7 +20,9 @@ Morelia provides the following groups of tools:
     clustering launchers.
 - **GROMACS**
   - `.trr` to `.xtc` trajectory compression with `gmx trjconv`;
-  - a Desmond-to-gmx_MMPBSA preparation and calculation workflow.
+  - launching the Desmond-to-gmx_MMPBSA preparation and calculation workflow,
+    which is now provided by a standalone application installed separately
+    from Morelia.
 - **Python**
   - measurement of ligand-atom distances from receptor residue centroids.
 - **VMD**
@@ -90,8 +92,12 @@ licence permits the intended use.
 
 #### Additional MM-PBSA requirements
 
-The **GROMACS → Desmond MM-PBSA** mini-application requires a suitable Conda
-environment or an equivalent active Python environment containing:
+The **GROMACS → Desmond MM-PBSA** workflow is developed and installed as a
+standalone application, separate from Morelia. Install it first (the default
+configuration expects it under `$HOME/desmond_gmxMMPBSA/`).
+
+The standalone application itself requires a suitable Conda environment or an
+equivalent active Python environment containing:
 
 - NumPy, MDTraj, NetworkX, and ParmEd;
 - GROMACS (`gmx`);
@@ -99,8 +105,12 @@ environment or an equivalent active Python environment containing:
 - AmberTools executables `parmchk2`, `tleap`, and `antechamber`;
 - an MPI launcher such as `mpirun`.
 
-The mini-application includes **Check environment** under its Tools menu. Use
-that check before starting a preparation or calculation.
+The standalone application includes a **Check environment** tool. Use that
+check before starting a preparation or calculation. Its own documentation
+describes the full requirements.
+
+The Morelia menu item launches the standalone application through the command
+configured as `cmdDesmond_gmxMMPBSA` in `bin/preferences.py`.
 
 ## Installation
 
@@ -146,7 +156,9 @@ Edit `bin/preferences.py` before first use:
 - set `doc_dir` and `example_dir` to the desired documentation and example
   directories;
 - set the commands used to launch Grace, Maestro, VMD, YASARA, IPython, and a
-  terminal.
+  terminal;
+- set `cmdDesmond_gmxMMPBSA` to the command that launches the standalone
+  Desmond MM-PBSA application.
 
 For example:
 
@@ -159,6 +171,7 @@ cmdGB = "gracebat"
 cmdMaestro = "maestro"
 cmdVMD = "vmd"
 cmdYASARA = "yasara"
+cmdDesmond_gmxMMPBSA = "/path/to/desmond_gmxMMPBSA/run_desmond_gmxmmpbsa_wx.sh"
 ```
 
 Grace needs both an interactive command (`cmdGG`) and a batch command (`cmdGB`).

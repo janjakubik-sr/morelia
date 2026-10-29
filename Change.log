@@ -1,6 +1,22 @@
 Morelia Change.log
 ==================
 
+2026-10-29
+---------------------------------------------------------
+
+Desmond MM-PBSA moved to a standalone application
+  * Removed the bundled bin/desmond_gmxMMPBSA/ subfolder; the Desmond-to-
+    gmx_MMPBSA workflow is now developed and installed as a standalone
+    application outside Morelia (default location $HOME/desmond_gmxMMPBSA/).
+  * morelia.py: the Gromacs menu item "Desmond MM-PBSA" now launches the
+    external command pref.cmdDesmond_gmxMMPBSA through the shell instead
+    of running the bundled GUI script.
+  * preferences.py: new cmdDesmond_gmxMMPBSA setting pointing to the local
+    installation of the standalone application; install, doc, example and
+    external-application directories switched to $HOME-based paths.
+
+
+
 2026-10-15
 ---------------------------------------------------------
 

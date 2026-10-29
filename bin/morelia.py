@@ -404,14 +404,7 @@ class MainWindow(wx.Frame):
 
     def OnDesmondMMPBSA(self, event):
         self.__log('Starting Desmond MM-PBSA ...')
-        subprocess.Popen([
-            sys.executable,
-            os.path.join(
-                str(install_dir),
-                'desmond_gmxMMPBSA',
-                'desmond_gmxmmpbsa_wx.py',
-            ),
-        ])
+        subprocess.Popen(pref.cmdDesmond_gmxMMPBSA, shell=True, stdin=None, stdout=None, stderr=None, close_fds=True)
 
     def OnCMS2GRO(self, event):
         self.__log('Converting .cms structure to .gro ...')
