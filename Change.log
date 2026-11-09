@@ -1,6 +1,24 @@
 Morelia Change.log
 ==================
 
+2026-11-06
+---------------------------------------------------------
+
+bin/cms2gro.py, bin/dtr2trr.py, bin/trr2xtc.py
+  * When the selected working directory is under /home/roshi/Data (sshfs
+    mount of the atlas file server), the I/O-heavy conversion commands
+    (VMD, gmx trjconv, gmx check) are now executed remotely on atlas via
+    passwordless ssh instead of locally through the slow mount; output
+    paths are identical on both machines so the atomic .part -> final
+    renames and all file checks are unchanged.  Directories outside the
+    mount still run locally as before.
+README.md
+  * New "Remote execution on the atlas file server" section documenting the
+    ssh-based remote conversion mode, its requirements, and the new
+    troubleshooting entry for failed remote conversions.
+
+
+
 2026-10-29
 ---------------------------------------------------------
 

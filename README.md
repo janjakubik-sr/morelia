@@ -47,6 +47,12 @@ Many tools operate on files in the current working directory and create result
 files there. Select the intended directory with **File → Working Directory**
 before starting a calculation.
 
+The conversion tools `cms2gro.py`, `dtr2trr.py`, and `trr2xtc.py` are
+I/O-intensive. When the working directory is under `/home/roshi/Data` — the
+sshfs mount of the *atlas* file server — they execute VMD and GROMACS
+remotely on `atlas` instead of locally (see
+[Remote execution](#remote-execution-on-the-atlas-file-server)).
+
 ## Requirements
 
 ### Operating system and Python
@@ -188,6 +194,27 @@ export PATH="$SCHRODINGER:$PATH"
 
 Use the path supplied by your local Schrödinger installation.
 
+## Remote execution on the atlas file server
+
+`bin/cms2gro.py`, `bin/dtr2trr.py`, and `bin/trr2xtc.py` convert large Desmond
+and GROMACS trajectory files and are I/O-bound. When the selected working
+directory lies under `/home/roshi/Data` (the sshfs mount of the *atlas* file
+server), they run VMD and GROMACS directly on `atlas` through `ssh` and write
+their output there, so the trajectory data never crosses the network mount.
+The directory layout is identical on both machines, so the converted files
+appear immediately under the mount.
+
+This mode requires:
+
+- passwordless `ssh` access to `atlas` (for example public-key authentication);
+- `vmd` and `gmx` installed on `atlas` and reachable in `PATH` for
+  non-interactive `ssh` sessions;
+- the same `/home/roshi/Data` directory structure on both machines.
+
+Working directories outside `/home/roshi/Data` are converted locally as
+before. The host name and mount path are defined by the `REMOTE_HOST` and
+`REMOTE_MOUNT` constants at the top of each script.
+
 ## Running Morelia
 
 From the project root:
@@ -225,6 +252,9 @@ morelia/
 - **A VMD conversion fails**  
   Check `vmd -dispdev text` and confirm that the installed VMD plugins can read
   the relevant Maestro/Desmond format.
+- **A remote conversion on atlas fails**  
+  Check that `ssh atlas 'command -v vmd gmx'` succeeds without a password
+  prompt and that `/home/roshi/Data` exists on `atlas`.
 - **A YASARA operation fails**  
   Check the configured YASARA command and confirm that the macros under
   `bin/YASARA/` are accessible.

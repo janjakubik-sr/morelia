@@ -1,15 +1,34 @@
 import os
 import glob
 import re
+import shlex
 import subprocess
 import threading
 import wx
 
+# Conversions under this directory run on the file server "atlas" (sshfs
+# mount) instead of locally, so the I/O-heavy GROMACS work stays server-side.
+REMOTE_HOST = "atlas"
+REMOTE_MOUNT = "/home/roshi/Data"
 
-def gmx_frame_count(path):
+
+def is_remote_path(path):
+    """True when *path* lives on the sshfs mount served by REMOTE_HOST."""
+    abs_path = os.path.abspath(path)
+    return abs_path == REMOTE_MOUNT or abs_path.startswith(REMOTE_MOUNT + os.sep)
+
+
+def build_command(cmd_args, remote):
+    """Return the command to run, wrapped in ssh when *remote* is true."""
+    if remote:
+        return ["ssh", REMOTE_HOST, " ".join(shlex.quote(arg) for arg in cmd_args)]
+    return cmd_args
+
+
+def gmx_frame_count(path, remote=False):
     """Return the coordinate-frame count reported by ``gmx check``."""
     process = subprocess.run(
-        ["gmx", "check", "-f", path],
+        build_command(["gmx", "check", "-f", path], remote),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -125,6 +144,11 @@ class GMXConvertConverterFrame(wx.Frame):
         total_files = len(files)
         self.log(f"Found {total_files} file(s) matching pattern.\n" + "-"*55)
 
+        # Heavy trajectory I/O must happen where the files physically live.
+        remote = is_remote_path(work_dir)
+        if remote:
+            self.log(f"Directory is on the sshfs mount; running GROMACS on {REMOTE_HOST}.")
+
         for idx, file_path in enumerate(files, start=1):
             dir_name = os.path.dirname(file_path)
             base_name = os.path.splitext(os.path.basename(file_path))[0]
@@ -153,19 +177,19 @@ class GMXConvertConverterFrame(wx.Frame):
             try:
                 # Pipe input to feed the group ID option automatically when GROMACS prompts
                 process = subprocess.Popen(
-                    cmd,
+                    build_command(cmd, remote),
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True
                 )
-                
+
                 # Send the group choice followed by a newline and finish communication
                 stdout, stderr = process.communicate(input=f"{group_choice}\n")
 
                 if process.returncode == 0:
-                    input_frames = gmx_frame_count(file_path)
-                    output_frames = gmx_frame_count(tmp_xtc)
+                    input_frames = gmx_frame_count(file_path, remote)
+                    output_frames = gmx_frame_count(tmp_xtc, remote)
                     if output_frames != input_frames:
                         raise RuntimeError(
                             "Frame-count mismatch: "

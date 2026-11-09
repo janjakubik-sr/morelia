@@ -1,8 +1,28 @@
 import os
 import glob
+import shlex
 import subprocess
 import threading
 import wx
+
+# Conversions under this directory run on the file server "atlas" (sshfs
+# mount) instead of locally, so the I/O-heavy VMD work stays server-side.
+REMOTE_HOST = "atlas"
+REMOTE_MOUNT = "/home/roshi/Data"
+
+
+def is_remote_path(path):
+    """True when *path* lives on the sshfs mount served by REMOTE_HOST."""
+    abs_path = os.path.abspath(path)
+    return abs_path == REMOTE_MOUNT or abs_path.startswith(REMOTE_MOUNT + os.sep)
+
+
+def build_command(cmd_args, remote):
+    """Return the command to run, wrapped in ssh when *remote* is true."""
+    if remote:
+        return ["ssh", REMOTE_HOST, " ".join(shlex.quote(arg) for arg in cmd_args)]
+    return cmd_args
+
 
 class VMDTrajectoryConverterFrame(wx.Frame):
     def __init__(self):
@@ -140,6 +160,11 @@ class VMDTrajectoryConverterFrame(wx.Frame):
         total_files = len(files)
         self.log(f"Found {total_files} file(s) matching pattern.\n" + "-"*55)
 
+        # Heavy trajectory I/O must happen where the files physically live.
+        remote = is_remote_path(work_dir)
+        if remote:
+            self.log(f"Directory is on the sshfs mount; running VMD on {REMOTE_HOST}.")
+
         for idx, file_path in enumerate(files, start=1):
             dir_name = os.path.dirname(file_path)
             base_name = os.path.splitext(os.path.basename(file_path))[0]
@@ -172,7 +197,7 @@ quit
 
             try:
                 process = subprocess.Popen(
-                    ["vmd", "-dispdev", "text"],
+                    build_command(["vmd", "-dispdev", "text"], remote),
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
