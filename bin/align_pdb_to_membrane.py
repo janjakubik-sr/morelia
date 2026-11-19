@@ -22,7 +22,7 @@ err = ''
 #select yob file
 dialog = wx.FileDialog(None, "Choose pdb file to align", os.getcwd(), "","*.pdb", wx.FD_OPEN)
 if dialog.ShowModal() == wx.ID_OK:
-    yob=dialog.GetPath()
+    pdb=dialog.GetPath()
 else:
     msg = ('No file selected!\nExiting!')
     err = msg
@@ -31,7 +31,7 @@ else:
     dialog.Destroy()
 
 #get base name
-full_path=os.path.splitext(yob)[0]
+full_path=os.path.splitext(pdb)[0]
 target=os.path.basename(full_path).split('/')[-1]
 
 msg = (str(target)+'.pdb\nwill be aligned to membrane')

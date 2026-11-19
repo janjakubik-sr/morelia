@@ -1,6 +1,42 @@
 Morelia Change.log
 ==================
 
+2026-11-19
+---------------------------------------------------------
+
+bin/cms2gro.py, bin/dtr2trr.py
+  * Fixed invalid .gro output for systems with more than 99999 atoms.
+    VMD's writegro lets the atom serial overflow its 5-column .gro
+    field, which shifts the coordinate columns and makes GROMACS abort
+    with "Something is wrong in the coordinate formatting" (groio.cpp,
+    gmx trjconv/gmx check).  Atom serials above 99999 are now wrapped
+    modulo 100000 - the convention used by GROMACS's own .gro writer -
+    before the file is atomically installed; valid records are left
+    byte-identical and unrecognized record layouts raise an error
+    instead of passing a corrupt file to GROMACS.
+
+New YASARA CIF alignment (bin/)
+  * align_cif_to_membrane.py - wx GUI that aligns a .cif receptor
+    structure to the membrane-oriented OPM reference (M2_3UON_OPM.pdb)
+    with MUSTANGPP and saves the aligned structure as .pdb.
+  * YASARA/align_cif_to_membrane.mcr - macro template used by
+    align_cif_to_membrane.py.
+
+morelia.py
+  * New YASARA menu item:
+      - Align CIF to membrane -> align_cif_to_membrane.py
+
+align_pdb_to_membrane.py
+  * Variable naming cleanup (yob -> pdb).
+
+preferences.py
+  * install, doc, example, AutoDock and YASARA directories changed back
+    from $HOME placeholders to absolute paths; the placeholders are not
+    expanded where the settings are used directly in Python (for
+    example as subprocess arguments started without a shell).
+
+
+
 2026-11-06
 ---------------------------------------------------------
 

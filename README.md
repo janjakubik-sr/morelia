@@ -36,7 +36,8 @@ Morelia provides the following groups of tools:
     atom across docking poses (`yasara_distance_app.py`); pose sorting
     optionally appends these distances as the last column of the sorted
     results table;
-  - PDB/membrane alignment and YOb conversion/inspection tools.
+  - PDB and CIF alignment to membrane-oriented (OPM) references and YOb
+    conversion/inspection tools.
 - **Results and visualisation**
   - Grace plotting and graph viewing;
   - table viewing and heat plots;

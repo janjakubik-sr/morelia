@@ -1,5 +1,6 @@
 import os
 import glob
+import re
 import shlex
 import subprocess
 import threading
@@ -22,6 +23,58 @@ def build_command(cmd_args, remote):
     if remote:
         return ["ssh", REMOTE_HOST, " ".join(shlex.quote(arg) for arg in cmd_args)]
     return cmd_args
+
+
+# .gro atom records are fixed format: 15 columns of residue/atom naming,
+# a 5-column atom serial, then coordinates.
+GRO_HEADER_COLS = 15
+GRO_SERIAL_COLS = 5
+GRO_COORD_COLS = 24  # three %8.3f fields; VMD's writegro emits no velocities
+
+
+def wrap_gro_atom_serials(path):
+    """Wrap overflowing .gro atom serials back into their 5-column field.
+
+    VMD prints atom serials into the 5-column field without wrapping, so a
+    system with more than 99999 atoms lets every serial from 100000 on
+    spill into a sixth column.  That shifts the coordinate columns right
+    and GROMACS aborts with "Something is wrong in the coordinate
+    formatting".  GROMACS's own writer wraps serials modulo 100000
+    (groio.cpp, write_hconf_indexed_p); the same convention is applied
+    here.  Returns the number of atom records that were rewritten.
+    """
+    with open(path) as fh:
+        lines = fh.readlines()
+
+    natoms = int(lines[1])
+    if len(lines) != natoms + 3:
+        raise RuntimeError(
+            f"{path}: expected {natoms} atom records, found {len(lines) - 3}"
+        )
+
+    fixed = 0
+    for i in range(2, 2 + natoms):
+        line = lines[i].rstrip("\n")
+        tail = line[GRO_HEADER_COLS:]
+        match = re.match(r"\s*(\d+)", tail)
+        if match is None or len(tail) - match.end() != GRO_COORD_COLS:
+            raise RuntimeError(
+                f"{path}: unrecognized .gro atom record {i - 1}: {line!r}"
+            )
+        serial = int(match.group(1))
+        if serial > 99999:
+            lines[i] = (
+                line[:GRO_HEADER_COLS]
+                + f"{serial % 100000:{GRO_SERIAL_COLS}d}"
+                + tail[match.end():]
+                + "\n"
+            )
+            fixed += 1
+
+    if fixed:
+        with open(path, "w") as fh:
+            fh.writelines(lines)
+    return fixed
 
 
 class VMDConverterFrame(wx.Frame):
@@ -164,6 +217,12 @@ quit
                 stdout, stderr = process.communicate(input=vmd_tcl)
 
                 if process.returncode == 0 and os.path.getsize(tmp_gro) > 0:
+                    fixed = wrap_gro_atom_serials(tmp_gro)
+                    if fixed:
+                        self.log(
+                            f"    --> Wrapped {fixed} atom serials above the"
+                            " 5-column .gro limit"
+                        )
                     os.replace(tmp_gro, out_gro)
                     self.log(
                         f"    --> Successfully created from {coordinate_source}: {out_gro}"

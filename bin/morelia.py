@@ -135,7 +135,8 @@ class MainWindow(wx.Frame):
 
         yasaraMenu = wx.Menu()
         for id, label, helpText, handler in \
-            [(wx.ID_ANY, 'Align PDB to membrane', 'PDB to OPM', self.OnPDBOPM),
+            [(wx.ID_ANY, 'Align CIF to membrane', 'CIF to OPM', self.OnCIFOPM),
+             (wx.ID_ANY, 'Align PDB to membrane', 'PDB to OPM', self.OnPDBOPM),
              (wx.ID_ANY, 'Archive current folder', 'Compress to archive and clean current folder', self.OnArchive),
              (wx.ID_ANY, 'Dock - Local search', 'Dock using AutoLS', self.OnDockLS),
              (wx.ID_ANY, 'Dock - Rescore', 'Rescore docking poses', self.OnDockRe),
@@ -565,6 +566,13 @@ class MainWindow(wx.Frame):
     def OnPDBOPM(self, event):
         self.__log('Converting ...')
         exec_full(str(install_dir)+'align_pdb_to_membrane.py')
+        log = open('temp.log','r')
+        tolog = log.read()
+        self.__log(tolog)
+
+    def OnCIFOPM(self, event):
+        self.__log('Converting ...')
+        exec_full(str(install_dir)+'align_cif_to_membrane.py')
         log = open('temp.log','r')
         tolog = log.read()
         self.__log(tolog)
